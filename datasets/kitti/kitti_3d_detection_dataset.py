@@ -5,7 +5,7 @@ import os.path as osp
 import numpy as np
 from chainer.dataset import dataset_mixin
 
-def _load_kitti_points(path, intensity=False):
+def _load_kitti_points(path, intensity=True):
     points = np.fromfile(path, dtype=np.float32).reshape(-1, 4)
     return points if intensity else points[:, :3]
 

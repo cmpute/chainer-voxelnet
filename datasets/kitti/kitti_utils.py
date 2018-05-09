@@ -29,10 +29,10 @@ def label_cam_to_lidar(box_labels, Tr):
 
     # project center from cam to lidar
     cam = np.array([tx, ty, tz, 1]).reshape(-1, 1)
-    T = np.vstack(Tr, [0, 0, 0, 1])
+    T = np.vstack((Tr, [0, 0, 0, 1]))
     T_inv = npl.inv(T)
     lidar_loc = np.dot(T_inv, cam)
-    tx, ty, tz = lidar_loc[:3]
+    tx, ty, tz = lidar_loc[:3].reshape(-1)
 
     # ry in camera => rz in lidar
     rz = -ry - np.pi / 2
@@ -73,19 +73,11 @@ def compute_voxelgrid_size(B, V):
     should call _ensure_XXX on B, V first
     return W, H, D
     '''
-    return np.ceil((B[:, 1]- B[:, 0]) / V)
+    return np.ceil((B[:, 1]- B[:, 0]) / V).astype(int)
 
-def corner_to_bounding_2d(boxes_corner):
-    # (N, 4, 2) -> (N, 4) x1, y1, x2, y2
-    N = boxes_corner.shape[0]
-    standup_boxes2d = np.zeros((N, 4))
-    standup_boxes2d[:, [0, 1]] = np.min(boxes_corner, axis=1)
-    standup_boxes2d[:, [2, 3]] = np.max(boxes_corner, axis=1)
-    return standup_boxes2d
-
-def center_to_corner_2d(boxes_center):
-    # (N, 7) -> (N, 4, 2)
-    anchor_corner = []
+def center_to_bounding_2d(boxes_center):
+    # (N, 7) -> (N, 4)
+    anchor_box = []
     for anchor in boxes_center:
         tx, ty, tz, h, w, l, rz = anchor
         box = np.array([
@@ -95,14 +87,15 @@ def center_to_corner_2d(boxes_center):
         rotMat = np.array([
             [np.cos(rz), -np.sin(rz)],
             [np.sin(rz), np.cos(rz)]])
-        velo_box = np.dot(rotMat, box) + np.array([[tx], [ty]])
-        anchor_corner.append(velo_box.T)
-    return np.array(anchor_corner)
+        velo_box = np.dot(rotMat, box) + np.array([[tx], [ty]]) # broadcast
+        assert len(velo_box.shape) == 2
 
-def center_to_bounding_2d(boxes_center):
-    # (N, 7) -> (N, 4)
-    corner = center_to_corner_2d(boxes_center)
-    return corner_to_bounding_2d(corner)
+        bound_box = np.hstack((
+            np.min(velo_box, axis=1),
+            np.max(velo_box, axis=1)
+        ))
+        anchor_box.append(bound_box)
+    return np.array(anchor_box)
 
 class VoxelPreprocessor:
     def __init__(self, B, V, T, train_cls='Car'):
@@ -119,7 +112,7 @@ class VoxelPreprocessor:
         # shuffle points in the cloud
         npr.shuffle(lidar)
 
-        # TODO: Augment point cloud
+        # TODO: Augment and truncate point cloud
 
         # calculate voxel location
         voxel_coords = (lidar[:, :3] - self.bounds[:, 0]) / self.vsize
@@ -143,7 +136,7 @@ class VoxelPreprocessor:
             voxel_features.append(voxel)
 
         # transform ground truth
-        Tr = calib['Tr_velo2cam']
+        Tr = calib['Tr_velo_to_cam'].reshape(3, 4)
         gt_params = [label_cam_to_lidar(l[8:], Tr) for l in labels if l[0] == self.type]
         
         return voxel_features, voxel_coords, gt_params
@@ -182,19 +175,23 @@ class AnchorPreprocessor:
         # compute other used variable
         self.anchor_bbox = center_to_bounding_2d(self.anchors.reshape(-1, 7))
         self.anchorz = AZ # anchor Z
-        self.anchord = np.sqrt(w**2 + l**2) # anchor dimension
-        self.anchorsize = h, w, l # anchor height
+        self.anchord = np.sqrt(AS[0]**2 + AS[1]**2) # anchor dimension
+        self.anchorsize = AS[2], AS[0], AS[1] # anchor size (H, W, L)
 
     def __call__(self, gt_boxes):
         pos_equal_one = np.zeros(self.feature_map_shape + (self.anchorpp,))
         neg_equal_one = np.zeros(self.feature_map_shape + (self.anchorpp,))
         targets = np.zeros(self.feature_map_shape + (self.anchorpp, 7))
 
+        # return if there are no ground truth boxes
+        if len(gt_boxes) == 0:
+            return pos_equal_one, neg_equal_one, targets
+
         # compute overlaps
         gt_bbox = center_to_bounding_2d(gt_boxes)
         iou = bbox_overlaps(
-            np.ascontiguousarray(self.anchor_bbox),
-            np.ascontiguousarray(gt_bbox),
+            np.ascontiguousarray(self.anchor_bbox).astype(np.float32),
+            np.ascontiguousarray(gt_bbox).astype(np.float32),
         )
 
         # mark anchors with highest overlap
@@ -205,11 +202,11 @@ class AnchorPreprocessor:
 
         # mark anchors by overlap thresholds
         id_pos, id_pos_gt = np.where(iou > self.pos_threshold)
-        id_neg, id_neg_gt = np.where(np.all(iou < self.neg_threshold, axis=1))
+        id_neg, = np.where(np.all(iou < self.neg_threshold, axis=0))
 
         # join positive anchors
         id_pos = np.concatenate([id_pos, id_highest])
-        id_pos_gt = np.concatenate([id_pos_gt][id_highest_gt])
+        id_pos_gt = np.concatenate([id_pos_gt, id_highest_gt])
         id_pos, index = np.unique(id_pos, return_index=True)
         id_pos_gt = id_pos_gt[index]
 
@@ -226,15 +223,16 @@ class AnchorPreprocessor:
         pos_equal_one[index_x, index_y, index_z] = 1
 
         # compute box coefficients for positive anchors
-        targets[index_x, index_y, index_z, :] = [
-            (gt_boxes[id_pos_gt][0] - self.anchors[index_x, index_y, index_z, 0]) / self.anchord,
-            (gt_boxes[id_pos_gt][1] - self.anchors[index_x, index_y, index_z, 1]) / self.anchord,
-            (gt_boxes[id_pos_gt][2] - self.anchorz) / self.anchorsize[0],
-            np.log(gt_boxes[id_pos_gt][3] / self.anchorsize[0]),
-            np.log(gt_boxes[id_pos_gt][4] / self.anchorsize[1]),
-            np.log(gt_boxes[id_pos_gt][5] / self.anchorsize[2]),
-            (gt_boxes[id_pos_gt][6] - self.anchors[index_x, index_y, index_z, 6])
-        ]
+        gt_boxes = np.array(gt_boxes, copy=False)
+        targets[index_x, index_y, index_z, :] = np.array([
+            (gt_boxes[id_pos_gt, 0] - self.anchors[index_x, index_y, index_z, 0]) / self.anchord,
+            (gt_boxes[id_pos_gt, 1] - self.anchors[index_x, index_y, index_z, 1]) / self.anchord,
+            (gt_boxes[id_pos_gt, 2] - self.anchorz) / self.anchorsize[0],
+            np.log(gt_boxes[id_pos_gt, 3] / self.anchorsize[0]),
+            np.log(gt_boxes[id_pos_gt, 4] / self.anchorsize[1]),
+            np.log(gt_boxes[id_pos_gt, 5] / self.anchorsize[2]),
+            (gt_boxes[id_pos_gt, 6] - self.anchors[index_x, index_y, index_z, 6])
+        ], copy=False).T
 
         return pos_equal_one, neg_equal_one, targets
 
