@@ -27,6 +27,9 @@ def create_args():
         '-T', '--max_points_per_voxel', type=int, default=35,
         help='Maximum points per voxel')
     group.add_argument(
+        '-K', '--max_voxels', type=int, default=20000,
+        help='Maximum nonempty voxels')
+    group.add_argument(
         '-A', '--anchors_per_position', type=int, default=2,
         help='Anchors per position')
 
@@ -38,7 +41,7 @@ def create_args():
         '--gpus', type=str, default='0',
         help='GPU Ids to be used')
     group.add_argument(
-        '--batchsize', type=int, default=1,
+        '--batchsize', type=int, default=4,
         help='minibatch size')
     group.add_argument(
         '--snapshot_iter', type=int, default=1000,
@@ -65,6 +68,12 @@ def create_args():
         '--opt', type=str, default='Adam',
         choices=['MomentumSGD', 'Adam', 'AdaGrad', 'RMSprop'],
         help='Optimization method')
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--weight_decay', type=float, default=0.0005)
+    parser.add_argument('--adam_alpha', type=float, default=0.001)
+    parser.add_argument('--adam_beta1', type=float, default=0.9)
+    parser.add_argument('--adam_beta2', type=float, default=0.999)
+    parser.add_argument('--adam_eps', type=float, default=1e-8)
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -82,8 +91,8 @@ def create_result_dir(model_name):
         os.makedirs(result_dir)
     return result_dir
 
-def get_optimizer(model, opt, lr=None, adam_alpha=None, adam_beta1=None,
-                  adam_beta2=None, adam_eps=None, weight_decay=None, **discard):
+def get_optimizer(model, opt, lr, adam_alpha, adam_beta1,
+                  adam_beta2, adam_eps, weight_decay, **discard):
     if opt == 'MomentumSGD':
         optimizer = optimizers.MomentumSGD(lr=lr, momentum=0.9)
     elif opt == 'Adam':
@@ -106,6 +115,7 @@ def get_optimizer(model, opt, lr=None, adam_alpha=None, adam_beta1=None,
     return optimizer
 
 def get_params_from_target(target):
+    # TODO: add voxel size to command-line params
     params = dict()
     if target == 'Car':
         params['BX'] = (0, 70.4)

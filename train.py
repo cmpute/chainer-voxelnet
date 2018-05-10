@@ -13,8 +13,9 @@ from datasets.kitti.kitti_utils import VoxelRPNPreprocessor
 def main():
     args = create_args()
     targs = get_params_from_target(args.target)
-    targs['T'] = args.max_points_per_voxel
     targs['A'] = args.anchors_per_position
+    targs['T'] = args.max_points_per_voxel
+    targs['K'] = args.max_voxels
     result_dir = create_result_dir(args.model_name)
 
     # Prepare devices
@@ -53,6 +54,10 @@ def main():
     trainer.extend(extensions.LogReport(),
         trigger=(args.show_log_iter, 'iteration'))
     trainer.extend(extensions.ProgressBar())
+    trainer.extend(extensions.PrintReport(
+        ['epoch', 'iteration',
+         'main/conf_loss', 'main/reg_loss',
+         'validation/main/conf_loss', 'validation/main/reg_loss',]))
 
     trainer.run()
 

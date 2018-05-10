@@ -59,7 +59,7 @@ def ensure_bounding(B):
 def ensure_voxel(V):
     '''
     V: Size of a voxel (int or tuple)
-        (W, H, D)
+        (W, H, D) i.e. (vx, vy, vz)
     '''
     if isinstance(V, (tuple, list)):
         return np.array(V)
@@ -73,7 +73,7 @@ def compute_voxelgrid_size(B, V):
     should call _ensure_XXX on B, V first
     return W, H, D
     '''
-    return np.ceil((B[:, 1]- B[:, 0]) / V).astype(int)
+    return np.around((B[:, 1]- B[:, 0]) / V).astype(int)
 
 def center_to_bounding_2d(boxes_center):
     # (N, 7) -> (N, 4)
@@ -98,14 +98,16 @@ def center_to_bounding_2d(boxes_center):
     return np.array(anchor_box)
 
 class VoxelPreprocessor:
-    def __init__(self, B, V, T, train_cls='Car'):
+    def __init__(self, B, V, T, K, train_cls='Car'):
         '''
-        T: Maxiumum number of points per voxel
+        T: Maximum number of points per voxel
+        K: Maximum number of non-empty voxels
         train_cls: type of the object to train
         '''
         self.bounds = ensure_bounding(B)
         self.vsize = ensure_voxel(V)
         self.pointpv = T
+        self.maxv = K
         self.type = train_cls
 
     def __call__(self, lidar, labels, calib):
@@ -116,33 +118,43 @@ class VoxelPreprocessor:
 
         # calculate voxel location
         voxel_coords = (lidar[:, :3] - self.bounds[:, 0]) / self.vsize
-        voxel_coords = voxel_coords.astype(np.int32)
-        voxel_coords, inv_idx, voxel_counts = np.unique(voxel_coords,
-            axis=0, return_inverse=True, return_counts=True)
+        # convert to (D, H, W)
+        voxel_coords = voxel_coords.astype(int)[:, [2, 1, 0]]
 
         # group points, TODO: speed up using cupy
-        voxel_features = []
-        for i in range(len(voxel_coords)):
-            voxel = np.zeros((self.pointpv, 7), dtype=np.float32)
+        voxel_coords, inv_idx = np.unique(voxel_coords,
+            axis=0, return_inverse=True)
+
+        # calculate voxel features
+        voxel_counter = 0
+        voxel_features = np.empty((self.maxv, self.pointpv, 7), dtype=np.float32)
+        voxel_coords_final = np.empty((self.maxv, 3), dtype=int)
+        for i in npr.permutation(len(voxel_coords))[:self.maxv]: # shuffle
+            # select points within the voxel
+            voxel = np.empty((self.pointpv, 7), dtype=np.float32)
             pts = lidar[inv_idx == i]
 
-            # select points within the voxel
-            if voxel_counts[i] > self.pointpv:
+            # remove the part of points more than T
+            if len(pts) > self.pointpv:
                 pts = pts[:self.pointpv, :]
-                voxel_counts[i] = self.pointpv
 
             # augment each point with the relative offset
             voxel[:len(pts), :] = np.hstack((pts, pts[:, :3] - np.mean(pts[:, :3], 0)))
-            voxel_features.append(voxel)
+            voxel[len(pts):, :] = 0 # pad points
+
+            voxel_features[voxel_counter, :, :] = voxel
+            voxel_coords_final[voxel_counter, :] = voxel_coords[i]
+            voxel_counter += 1
+        voxel_features[voxel_counter:, :, :] = 0 # pad voxels
 
         # transform ground truth
         Tr = calib['Tr_velo_to_cam'].reshape(3, 4)
         gt_params = [label_cam_to_lidar(l[8:], Tr) for l in labels if l[0] == self.type]
         
-        return voxel_features, voxel_coords, gt_params
+        return voxel_features, voxel_coords_final, gt_params
 
 class AnchorPreprocessor:
-    def __init__(self, B, V, A, AS, pos_thres, neg_thres, AZ=2):
+    def __init__(self, B, V, A, AS, pos_thres, neg_thres, AZ=2, dtype='f4'):
         '''
         A: Anchors per position
         AS: Anchor size (W, L, H)
@@ -156,6 +168,7 @@ class AnchorPreprocessor:
         self.vsize = ensure_voxel(V)
         self.pos_threshold = pos_thres
         self.neg_threshold = neg_thres
+        self.dtype = dtype
 
         # compute anchors
         W, H, D = compute_voxelgrid_size(self.bounds, self.vsize)
@@ -179,9 +192,9 @@ class AnchorPreprocessor:
         self.anchorsize = AS[2], AS[0], AS[1] # anchor size (H, W, L)
 
     def __call__(self, gt_boxes):
-        pos_equal_one = np.zeros(self.feature_map_shape + (self.anchorpp,))
-        neg_equal_one = np.zeros(self.feature_map_shape + (self.anchorpp,))
-        targets = np.zeros(self.feature_map_shape + (self.anchorpp, 7))
+        pos_equal_one = np.zeros(self.feature_map_shape + (self.anchorpp,), dtype=self.dtype)
+        neg_equal_one = np.zeros(self.feature_map_shape + (self.anchorpp,), dtype=self.dtype)
+        targets = np.zeros(self.feature_map_shape + (self.anchorpp, 7), dtype=self.dtype)
 
         # return if there are no ground truth boxes
         if len(gt_boxes) == 0:
@@ -237,12 +250,19 @@ class AnchorPreprocessor:
         return pos_equal_one, neg_equal_one, targets
 
 class VoxelRPNPreprocessor:
-    def __init__(self, B, V, T, A, AS, pos_thres, neg_thres, AZ=2, train_cls='Car', **discard):
-        self.pvoxel = VoxelPreprocessor(B, V, T, train_cls)
+    def __init__(self, B, V, T, K, A, AS, pos_thres, neg_thres, AZ=2, train_cls='Car', **discard):
+        self.pvoxel = VoxelPreprocessor(B, V, T, K, train_cls)
         self.panchor = AnchorPreprocessor(B, V, A, AS, pos_thres, neg_thres, AZ)
 
     def __call__(self, args):
         lidar, labels, calib = args
         voxel_features, voxel_coords, gt_params = self.pvoxel(lidar, labels, calib)
         pos_equal_one, neg_equal_one, targets = self.panchor(gt_params)
+
+        # input shapes:
+        #   voxel_features: (n_voxel, T, 7)
+        #   voxel_coords: (n_voxel, 3)
+        #   pos_equal_one: (H/2, W/2, 2)
+        #   neg_equal_one: (H/2, W/2, A)
+        #   targets: (H/2, W/2, A, 7)
         return voxel_features, voxel_coords, pos_equal_one, neg_equal_one, targets
