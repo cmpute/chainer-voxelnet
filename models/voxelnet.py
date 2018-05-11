@@ -144,7 +144,6 @@ class Unravel(Function):
         return gx, None, None
 
 # Region Proposal Network
-# TODO: fix block params
 class RPN(Chain):
     def __init__(self, anchors_per_position):
         super(RPN, self).__init__()

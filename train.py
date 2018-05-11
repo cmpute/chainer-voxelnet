@@ -1,6 +1,5 @@
 from models import VoxelNet
-from utils.prepare_train import create_args, \
-    create_result_dir, get_optimizer, get_params_from_target
+from utils.prepare_args import *
 from utils.model_train import CRMapDetector
 
 from chainer.datasets import TransformDataset
@@ -11,7 +10,7 @@ from datasets import Kitti3DDetectionDataset as KITTI
 from datasets.kitti.kitti_utils import VoxelRPNPreprocessor
 
 def main():
-    args = create_args()
+    args = create_args('train')
     targs = get_params_from_target(args.target)
     targs['A'] = args.anchors_per_position
     targs['T'] = args.max_points_per_voxel
@@ -53,13 +52,19 @@ def main():
         trigger=(args.snapshot_iter, 'iteration'))
     trainer.extend(extensions.LogReport(),
         trigger=(args.show_log_iter, 'iteration'))
-    trainer.extend(extensions.ProgressBar())
+    trainer.extend(extensions.ProgressBar(update_interval=20))
     trainer.extend(extensions.PrintReport(
         ['epoch', 'iteration',
          'main/conf_loss', 'main/reg_loss',
-         'validation/main/conf_loss', 'validation/main/reg_loss',]))
+         'validation/main/conf_loss', 'validation/main/reg_loss']))
 
+    # Resume from snapshot
+    if args.resume_from:
+        chainer.serializers.load_npz(args.resume_from, trainer)
+
+    # Train and save
     trainer.run()
+    model.save(create_result_file(args.model_name))
 
 if __name__ == '__main__':
     main()

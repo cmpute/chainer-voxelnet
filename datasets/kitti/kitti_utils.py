@@ -98,17 +98,17 @@ def center_to_bounding_2d(boxes_center):
     return np.array(anchor_box)
 
 class VoxelPreprocessor:
-    def __init__(self, B, V, T, K, train_cls='Car'):
+    def __init__(self, B, V, T, K, target='Car', **discard):
         '''
         T: Maximum number of points per voxel
         K: Maximum number of non-empty voxels
-        train_cls: type of the object to train
+        target: category of the object to train, `None` indicates test phase
         '''
         self.bounds = ensure_bounding(B)
         self.vsize = ensure_voxel(V)
         self.pointpv = T
         self.maxv = K
-        self.type = train_cls
+        self.type = target
 
     def __call__(self, lidar, labels, calib):
         # shuffle points in the cloud
@@ -147,14 +147,17 @@ class VoxelPreprocessor:
             voxel_counter += 1
         voxel_features[voxel_counter:, :, :] = 0 # pad voxels
 
-        # transform ground truth
-        Tr = calib['Tr_velo_to_cam'].reshape(3, 4)
-        gt_params = [label_cam_to_lidar(l[8:], Tr) for l in labels if l[0] == self.type]
-        
-        return voxel_features, voxel_coords_final, gt_params
+        if self.type:
+            # transform ground truth
+            Tr = calib['Tr_velo_to_cam'].reshape(3, 4)
+            gt_params = [label_cam_to_lidar(l[8:], Tr) for l in labels if l[0] == self.type]
+            
+            return voxel_features, voxel_coords_final, gt_params
+        else:
+            return voxel_features, voxel_coords_final
 
 class AnchorPreprocessor:
-    def __init__(self, B, V, A, AS, pos_thres, neg_thres, AZ=2, dtype='f4'):
+    def __init__(self, B, V, A, AS, pos_thres, neg_thres, AZ=2, dtype='f4', **discard):
         '''
         A: Anchors per position
         AS: Anchor size (W, L, H)
@@ -182,7 +185,7 @@ class AnchorPreprocessor:
         l = np.full_like(cx, AS[1])
         h = np.full_like(cx, AS[2])
         r = np.ones_like(cx) * np.linspace(0, np.pi, A + 1)[:A]
-        self.anchors = np.stack([cx, cy, cz, h, w, l, r], axis=-1) # shape: (H/2, W/2, AZ, 7)
+        self.anchors = np.stack([cx, cy, cz, h, w, l, r], axis=-1) # shape: (H/2, W/2, A, 7)
         self.feature_map_shape = (H // 2, W // 2)
 
         # compute other used variable

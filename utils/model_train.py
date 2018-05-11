@@ -1,5 +1,6 @@
 from chainer import Chain, reporter
 from chainer.backends import cuda
+from chainer.serializers import save_hdf5
 import chainer.functions as F
 
 class CRMapDetector(Chain):
@@ -37,5 +38,8 @@ class CRMapDetector(Chain):
         conf_loss = self.alpha * cls_pos_loss + self.beta * cls_neg_loss
 
         reporter.report({'conf_loss': conf_loss,
-                         'reg_loss': reg_loss})
+                         'reg_loss': reg_loss}, self)
         return reg_loss + conf_loss
+
+    def save(self, path):
+        save_hdf5(path, self.net)
