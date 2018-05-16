@@ -3,6 +3,7 @@ import os
 import sys
 import shutil
 import time
+import json
 
 import chainer
 from chainer import optimizers
@@ -15,6 +16,14 @@ def create_args(phase='train'):
         group.add_argument(
             '--kitti_path', type=str,
             help='The path to the root of KITTI dataset')
+        group.add_argument(
+            '--train_proportion', type=float, default=0.9,
+            help='The proportion of train data in the whole dataset'
+        )
+        group.add_argument(
+            '--valid_proportion', type=float, default=0.1,
+            help='The proportion of valid data in the whole dataset'
+        )
     elif phase == 'test':
         group.add_argument(
             'net_weight_path', type=str,
@@ -140,13 +149,15 @@ def get_optimizer(model, opt, lr, adam_alpha, adam_beta1,
 def get_params_from_target(target):
     # TODO: add voxel size to command-line params
     params = dict()
+
+    # default values
     if target == 'Car':
         params['BX'] = (0, 67.2)
-        params['BY'] = (-38.4, 38.4)
+        params['BY'] = (-40, 40)
         params['BZ'] = (-3, 1)
-        params['VD'] = 0.8 # 0.4
-        params['VH'] = 1.6 # 0.2
-        params['VW'] = 1.4 # 0.2
+        params['VD'] = 0.4
+        params['VH'] = 0.2
+        params['VW'] = 0.2
         params['AL'] = 3.9
         params['AW'] = 1.6
         params['AH'] = 1.56
@@ -154,7 +165,20 @@ def get_params_from_target(target):
         params['pos_thres'] = 0.6
         params['neg_thres'] = 0.45
 
-    params['B'] = (params['BX'], params['BY'], params['BZ'])
-    params['V'] = (params['VW'], params['VH'], params['VD'])
-    params['AS'] = (params['AW'], params['AL'], params['AH'])
+    # Customize grid size here
+    params['BY'] = (-38.4, 38.4)
+    params['VD'] = 0.8 # 0.4
+    params['VH'] = 1.6 # 0.2
+    params['VW'] = 1.4 # 0.2
+
+    params['B'] = [params['BX'], params['BY'], params['BZ']]
+    params['V'] = [params['VW'], params['VH'], params['VD']]
+    params['AS'] = [params['AW'], params['AL'], params['AH']]
     return params
+
+def dump_setting(targs, dir):
+    # Dump net arguments:
+    setting = json.dumps({"A": targs["A"], "T": targs["T"], "K": targs["K"],
+        "B": targs["B"], "V": targs["V"], "AS": targs["AS"]})
+    with open(os.path.join(dir, "settings.json"), 'w') as f:
+        f.write(setting)

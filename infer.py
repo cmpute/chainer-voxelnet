@@ -4,6 +4,7 @@ from datasets.kitti.kitti_utils import VoxelPreprocessor,\
 from datasets.kitti.kitti_3d_detection_dataset import _load_kitti_points
 from utils.prepare_args import create_args, get_params_from_target
 
+from chainer import global_config
 from chainer.serializers import load_hdf5
 import chainer.cuda as cuda
 import numpy as np
@@ -14,6 +15,8 @@ def main():
     targs['A'] = args.anchors_per_position
     targs['T'] = args.max_points_per_voxel
     targs['K'] = args.max_voxels
+
+    global_config.train =  False
 
     # Prepare devices
     devices = {}

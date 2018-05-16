@@ -45,7 +45,7 @@ class Kitti3DDetectionDataset(dataset_mixin.DatasetMixin):
     Should be used along with TransformDataset
     transform input: point_cloud (ndarray), labels (list of tuple), calibration (dict of ndarray)
     '''
-    def __init__(self, root_path, split='train'):
+    def __init__(self, root_path, split='train', train_proportion=0.9, valid_proportion=0.1):
         if split is 'test':
             mid = 'testing'
         elif split in ('train', 'val'):
@@ -64,12 +64,13 @@ class Kitti3DDetectionDataset(dataset_mixin.DatasetMixin):
             lfile = osp.join(label_path, pname + '.txt')
             cfile = osp.join(calib_path, pname + '.txt')
             paths.append((pfile, lfile, cfile))
-        splitidx = int(len(paths) * 0.1) # split by file list
 
+        # split by file list
+        assert(train_proportion + valid_proportion <= 1)
         if split is 'train':
-            self.data = paths[splitidx:]
+            self.data = paths[:int(len(paths) * train_proportion)]
         elif split is 'val':
-            self.data = paths[:splitidx]
+            self.data = paths[-int(len(paths) * valid_proportion):]
 
     def __len__(self):
         return len(self.data)

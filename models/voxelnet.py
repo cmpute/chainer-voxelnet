@@ -198,6 +198,7 @@ class VoxelNet(Chain):
         print("    Bounds in z:", B[2])
         print("    D, H, W:", self.D, self.H, self.W)
         print("    T:", T)
+        print("    K:", discard["K"])
 
         if self.W % 8 !=0 or self.H % 8 != 0:
             # this will make it unable to concatenate rpn feature blocks

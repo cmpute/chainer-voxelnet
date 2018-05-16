@@ -16,6 +16,7 @@ def main():
     targs['T'] = args.max_points_per_voxel
     targs['K'] = args.max_voxels
     result_dir = create_result_dir(args.model_name)
+    dump_setting(targs, result_dir)
 
     # Prepare devices
     devices = {}
@@ -33,8 +34,10 @@ def main():
     
     # Setting up datasets
     prep = VoxelRPNPreprocessor(**targs)
-    train = TransformDataset(KITTI(args.kitti_path, 'train'), prep)
-    valid = TransformDataset(KITTI(args.kitti_path, 'val'), prep)
+    train = TransformDataset(KITTI(args.kitti_path,
+        'train', train_proportion=args.train_proportion), prep)
+    valid = TransformDataset(KITTI(args.kitti_path,
+        'val', valid_proportion=args.valid_proportion), prep)
     print('train: {}, valid: {}'.format(len(train), len(valid)))
 
     # Iterator

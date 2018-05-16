@@ -218,7 +218,7 @@ class AnchorPreprocessor:
 
         # mark anchors by overlap thresholds
         id_pos, id_pos_gt = np.where(iou > self.pos_threshold)
-        id_neg, = np.where(np.all(iou < self.neg_threshold, axis=0))
+        id_neg, = np.where(np.all(iou < self.neg_threshold, axis=1))
 
         # join positive anchors
         id_pos = np.concatenate([id_pos, id_highest])
